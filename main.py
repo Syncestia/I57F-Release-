@@ -52,17 +52,39 @@ def longest(array, dimensions=1):
 def check_permissions(message, permissions):
     if permissions == []:
         return True
+    if message.author.id == meta.owner_id:
+        return True
     for permission in permissions:
         if eval("message.author.guild_permissions.{0}".format(permission)):
             return True
     return False
 
+def convert_mention(mention):
+    try:
+        mention = mention.lstrip("<@!>")
+        mention = int(mention)
+        return mention
+    except:
+        return False
+
+def convert_name(name):
+    for user in users:
+        if users[user].name == name:
+            return user
+    return False
+
 class data:
     def __init__(self):
         self.bot_launches = 1 # easy
+        self.type = ""
 
     def update(self):
-        test_user = user()
+        if self.type == "u":
+            test_user = user()
+        elif self.type == "s":
+            test_user = server()
+        else:
+            pass
 
         needed = False
         for attr, value in test_user.__dict__.items():
@@ -76,6 +98,7 @@ class data:
 
 class user(data):
     def __init__(self, name="test"):
+        self.type = "u"
         self.name = name
         self.bot_launches = 1
         self.messages = 0
@@ -85,6 +108,7 @@ class user(data):
     
 class server(data):
     def __init__(self):
+        self.type = "s"
         self.bot_launches = 1
         self.prefix = "~"
         self.blacklist = []
@@ -100,7 +124,7 @@ class command:
 
 class meta:
     def __init__(self):
-        self.owner_id = cfg['meta']['owner_id']
+        self.owner_id = int(cfg['meta']['owner_id'])
         self.ready = False
         self.messages = 0
         self.stimulate = [
@@ -181,7 +205,7 @@ async def on_message(message):
     try:
         users[message.author.id].messages += 1
     except:
-        pass # who cares
+        users[message.author.id] = user(name=message.author.name)
 
     server = servers[message.guild.id]
 
@@ -221,6 +245,21 @@ async def mimic(message):
 async def stats(message):
     reply = "```ini\n"
     check = [[],[]]
+
+    try:
+        message.author.id = int(message.nonce[5:])
+    except IndexError:
+        pass
+    except ValueError:
+        x = convert_name(message.nonce[5:])
+        y = convert_mention(message.nonce[5:])
+        if x:
+            message.author.id = x
+        elif y:
+            message.author.id = y
+        else:
+            pass
+
     for attr, value in users[message.author.id].__dict__.items():
         check[0].append(attr)
         check[1].append(value)
