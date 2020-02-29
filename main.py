@@ -18,6 +18,8 @@ def usave():
     pickle.dump(users, open("users.data", "wb"))
 def ssave():
     pickle.dump(servers, open("servers.data", "wb"))
+def csave():
+    pickle.dump(covenants, open("covenants.data", "wb"))
 
 def lprint(what):
     for item in what:
@@ -73,16 +75,26 @@ def convert_name(name):
             return user
     return False
 
+def find_covenant(ID):
+    try:
+        for covenant in covenants:
+            if covenant.name == users[ID].covenant:
+                return covenant
+    except KeyError:
+        return "User doesn't exist!"
+    return False
+
 class data:
     def __init__(self):
-        self.bot_launches = 1 # easy
-        self.type = ""
+        self.hidden_type = ""
 
     def update(self):
-        if self.type == "u":
+        if self.hidden_type == "u":
             test_user = user()
-        elif self.type == "s":
+        elif self.hidden_type == "s":
             test_user = server()
+        elif self.hidden_type == "c":
+            test_user = covenant()
         else:
             pass
 
@@ -98,21 +110,53 @@ class data:
 
 class user(data):
     def __init__(self, name="test"):
-        self.type = "u"
+        self.hidden_type = "u"
         self.name = name
         self.bot_launches = 1
         self.messages = 0
-        
-        self.tier = 0
         self.faith = 0
+        
+        self.covenant = "Wifey"
+        self.tier = 0
+        self.pledged = 0
+        self.tier_cost = 5
     
 class server(data):
     def __init__(self):
-        self.type = "s"
+        self.hidden_type = "s"
         self.bot_launches = 1
         self.prefix = "~"
         self.blacklist = []
         self.whitelist = []
+
+class covenant(data):
+    def __init__(self, name="test", owner="test"):
+        self.hidden_type = "c"
+        self.hidden_stimulate = []
+        self.hidden_members = []
+        self.name = name
+        self.leader = False
+        self.owner = owner
+    
+    def check_leader(self):
+        check = [0, 0]
+        winner = 0
+        for member in self.hidden_members:
+            if users[member].tier_cost > check[0]:
+                check[1] = users[member].pledged
+                winner = member
+            elif users[member].tier_cost == check[0]:
+                if users[member].pledged > check[1]:
+                    check[1] = users[member].pledged
+                    winner = member
+        if winner == 0:
+            print("There is nobody in %s covenant."%self.name)
+            return
+        if check == [0, 0]:
+            print("Nobody has pledged to %s covenant!"%self.name)
+            return
+        print(users[member].name, member, "is the leader of this covenant!")
+        self.leader = [users[member].name, member]
 
 class command:
     def __init__(self, name, permissions=[], subcommands={}, arguments=[]):
@@ -127,12 +171,10 @@ class meta:
         self.owner_id = int(cfg['meta']['owner_id'])
         self.ready = False
         self.messages = 0
-        self.stimulate = [
-            ["A jolt! But not strong enough to start anything.", "The weakest of resonance is felt in your heart", "You feel a warm tingle in your soul"]
-        ]
 
 users = try_load("users.data", {})
 servers = try_load("servers.data", {})
+covenants = try_load("covenants.data", {})
 cmds = {}
 cfg = configparser.ConfigParser()
 cfg.read("config.ini")
@@ -158,7 +200,7 @@ def update_data(client):
 def load_cmds():
     load = [
         ["mimic"],
-        ["stats"],
+        ["stats", [], {"covenant":check_covenant}],
         ["stimulate"],
         ["admin", ["manage_guild"], {"blacklist":blacklist, "whitelist":whitelist}]
     ]
@@ -167,6 +209,22 @@ def load_cmds():
             cmd.append([])
         cmds[cmd[0]] = command(cmd[0], permissions=cmd[1], subcommands=cmd[2], arguments=cmd[3])
         print("{0} LOADED.".format(cmd[0]))
+
+def default_covenants():
+    load = [
+        ["wifey"],
+    ]
+    for c in load:
+        covenants[c[0]] = covenant(name=c[0].capitalize(), owner=[users[540426841203146754].name, 540426841203146754])
+    stimulates = {
+        "wifey": [
+            ["You feel nothing but pain.", "Your soul reacts with hatred, but only because it knows something is there", "A slight glow emits from your soul"],
+            ["A slight warmth fills you with joy.", "The pain is almost gone. There is something out there stopping it", "Your chest glows with the power of your faith"]
+        ],
+    }
+    for c in covenants:
+        covenants[c].hidden_stimulate = stimulates[c]
+    csave()
 
 def passive_generation():
     tick = 0
@@ -185,6 +243,8 @@ async def on_ready():
     print("CONNECTED")
     stats = update_data(client)
     load_cmds()
+    if covenants == {}:
+        default_covenants()
     lprint([
         ("%s NEW SERVERS"%stats[0]),
         ("%s OLD SERVERS"%stats[1]),
@@ -230,10 +290,13 @@ async def command_parse(message):
             if not check_permissions(message, cmds[cmd].permissions):
                 await message.channel.send("You do not have the permissions to use this command!")
                 return
-            for x in cmds[cmd].subcommands:
-                if x.startswith(split[1]):
-                    await cmds[cmd].subcommands[x](message)
-                    return
+            try:
+                for x in cmds[cmd].subcommands:
+                    if x.startswith(split[1]):
+                        await cmds[cmd].subcommands[x](message)
+                        return
+            except IndexError:
+                pass
             await cmds[cmd].run(message)
             return
     await message.channel.send("`You {0}, sure.`".format(message.nonce))
@@ -261,15 +324,51 @@ async def stats(message):
             pass
 
     for attr, value in users[message.author.id].__dict__.items():
+        if attr.startswith("hidden_"):
+            continue
+        if isinstance(value, float):
+            value = "{0:.2f}".format(value)
         check[0].append(attr)
         check[1].append(value)
     print(check)
     check = longest(check, 2)
     for attr, value in users[message.author.id].__dict__.items():
+        if attr.startswith("hidden_"):
+            continue
         attr = attr.capitalize()
         attr = attr.replace("_", " ")
         add = "[ {:%d} ] ; {:>%d}\n"%(check[0], check[1])
-        add = add.format(attr, value)
+        if isinstance(value, float):
+            value = "{0:.2f}".format(value)
+        add = add.format(attr, str(value))
+        reply += add
+    reply += "```"
+    await message.channel.send(reply)
+async def check_covenant(message):
+    reply = "```ini\n"
+    check = [[],[]]
+    try:
+        c = covenants[message.nonce.split()[2]]
+    except KeyError:
+        await message.channel.send("Covenant does not exist!")
+    for attr, value in c.__dict__.items():
+        if attr.startswith("hidden_"):
+            continue
+        if attr.startswith("owner"):
+            value = value[0]
+        check[0].append(attr)
+        check[1].append(value)
+    print(check)
+    check = longest(check, 2)
+    for attr, value in c.__dict__.items():
+        if attr.startswith("hidden_"):
+            continue
+        if attr.startswith("owner"):
+            value = value[0]
+        attr = attr.capitalize()
+        attr = attr.replace("_", " ")
+        add = "[ {:%d} ] ; {:>%d}\n"%(check[0], check[1])
+        add = add.format(attr, str(value))
         reply += add
     reply += "```"
     await message.channel.send(reply)
@@ -281,30 +380,88 @@ async def stimulate(message):
     punct = ["", ",", "."]
     tier = users[message.author.id].tier
     z = bbs * (tier + 1)
-    reply = "{0}{1} {2} {3}".format(meta.stimulate[tier][bas], punct[bas], message.author.mention, ("*"*bbs)+"B"+("Z"*z)+"T"+("*"*bbs))
+    try:
+        c_message = find_covenant(message.author.id).hidden_stimulate[tier][bas]
+    except IndexError:
+        c_message = find_covenant(message.author.id).hidden_stimulate[-1][bas]
+    reply = "{0}{1} {2} {3}".format(c_message, punct[bas], message.author.mention, ("*"*bbs)+"B"+("Z"*z)+"T"+("*"*bbs))
     users[message.author.id].faith += (0.005*(tier+1))*rng/10
     await message.channel.send(reply)
 
+async def pledge(message):
+    split = message.nonce.split()
+    user = users[message.author.id]
+    try:
+        amount = int(split[1])
+    except (IndexError, ValueError):
+        await message.channel.send("`{0} faith needed for next tier in covenant {1}.` {2}".format(user.tier_cost, user.covenant, message.author.mention))
+        return
+    if user.faith - amount < 0:
+        await message.channel.send("`You do not have enough faith for this pledge.` {0}".format(message.author.mention))
+        return
+    users[message.author.id].faith -= amount
+    users[message.author.id].pledged += amount
+    complete = 0
+    increase = 0
+    while not complete:
+        if user.pledged > user.tier_cost:
+            users[message.author.id].tier += 1
+            increase += 1
+            users[message.author.id].tier_cost *= (users[message.author.id].tier_cost/2)
+            users[message.author.id].pledged -= user.tier_cost
+        else:
+            complete = 1
+    await message.channel.send("`{0} faith pledged to {1}. You have gone up {2} tiers.`".format(amount, user.covenant, increase))
+    covenants[user.covenant].check_leader()
+
 async def admin(message):
     await message.channel.send("You don't use the command like this.")
-
 async def whitelist(message):
+    split = message.nonce.split()
     try:
-        new = int(message.content.split()[2])
+        new = int(split[3])
     except:
-        await message.channel.send("You didn't give an ID to blacklist!")
+        await message.channel.send("You didn't give an ID to whitelist!")
         return
-    servers[message.guild.id].whitelist.append(new)
-    await message.channel.send("`{0} added to the server's channel whitelist.`".format(new))
-
+    if split[2] == "add":
+        if new in servers[message.guild.id].whitelist:
+            await message.channel.send("`This channel is already whitelisted.`")
+            return
+        servers[message.guild.id].whitelist.append(new)
+        what = "added"
+    elif split[2] == "remove":
+        if new not in servers[message.guild.id].whitelist:
+            await message.channel.send("`This channel is not whitelisted.`")
+            return
+        servers[message.guild.id].whitelist.remove(new)
+        what = "removed"
+    else:
+        await message.channel.send("`Invalid syntax.`")
+    await message.channel.send("`{0} {1} to the server's channel whitelist.`".format(new, what))
+    ssave()
 async def blacklist(message):
+    split = message.nonce.split()
     try:
-        new = int(message.content.split()[2])
+        new = int(split[3])
     except:
         await message.channel.send("You didn't give an ID to blacklist!")
         return
-    servers[message.guild.id].blacklist.append(new)
-    await message.channel.send("`{0} added to the server's channel blacklist.`".format(new))
+    if split[2] == "add":
+        if new in servers[message.guild.id].blacklist:
+            await message.channel.send("`This channel is already blacklisted.`")
+            return
+        servers[message.guild.id].blacklist.append(new)
+        what = "added"
+    elif split[2] == "remove":
+        if new not in servers[message.guild.id].blacklist:
+            await message.channel.send("`This channel is not blacklisted.`")
+            return
+        servers[message.guild.id].blacklist.remove(new)
+        what = "removed"
+    else:
+        await message.channel.send("`Invalid syntax.`")
+    await message.channel.send("`{0} {1} to the server's channel blacklist.`".format(new, what))
+    ssave()
 
 def start():
     loop = asyncio.get_event_loop()
